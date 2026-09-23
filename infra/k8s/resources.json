@@ -1,0 +1,2157 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "nexo-bank"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Secret",
+      "metadata": {
+        "name": "demo-secrets",
+        "namespace": "nexo-bank"
+      },
+      "type": "Opaque",
+      "stringData": {
+        "SERVICE_TOKEN": "local-cluster-demo-token-change-me",
+        "DEMO_PASSWORD": "Demo1234!",
+        "identity_DATABASE_URL": "postgres://identity:local-demo-only-identity@db-identity:5432/identity",
+        "identity_POSTGRES_PASSWORD": "local-demo-only-identity",
+        "ledger_POSTGRES_PASSWORD": "local-demo-only-ledger",
+        "notifications_POSTGRES_PASSWORD": "local-demo-only-notifications",
+        "simulator_POSTGRES_PASSWORD": "local-demo-only-simulator",
+        "statements_POSTGRES_PASSWORD": "local-demo-only-statements",
+        "transfers_POSTGRES_PASSWORD": "local-demo-only-transfers",
+        "ledger_DATABASE_URL": "postgres://ledger:local-demo-only-ledger@db-ledger:5432/ledger",
+        "notifications_DATABASE_URL": "postgres://notifications:local-demo-only-notifications@db-notifications:5432/notifications",
+        "simulator_DATABASE_URL": "postgres://simulator:local-demo-only-simulator@db-simulator:5432/simulator",
+        "statements_DATABASE_URL": "postgres://statements:local-demo-only-statements@db-statements:5432/statements",
+        "transfers_DATABASE_URL": "postgres://transfers:local-demo-only-transfers@db-transfers:5432/transfers"
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "api",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "api"
+          }
+        },
+        "strategy": {
+          "type": "RollingUpdate",
+          "rollingUpdate": {
+            "maxUnavailable": 0,
+            "maxSurge": 1
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "api"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "api",
+                "image": "nexo-bank-api:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "command": [
+                  "node",
+                  "dist/main.js"
+                ],
+                "ports": [
+                  {
+                    "containerPort": 3000
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "identity_DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "KAFKA_BROKER",
+                    "value": "kafka:9092"
+                  },
+                  {
+                    "name": "SERVICE_NAME",
+                    "value": "identity"
+                  },
+                  {
+                    "name": "SERVICE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "SERVICE_TOKEN"
+                      }
+                    }
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "80Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "512Mi"
+                  }
+                },
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "runAsUser": 1000
+                },
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/api/health",
+                    "port": 3000
+                  },
+                  "periodSeconds": 5
+                },
+                "livenessProbe": {
+                  "tcpSocket": {
+                    "port": 3000
+                  },
+                  "initialDelaySeconds": 30,
+                  "periodSeconds": 10
+                },
+                "startupProbe": {
+                  "httpGet": {
+                    "path": "/api/health",
+                    "port": 3000
+                  },
+                  "failureThreshold": 60,
+                  "periodSeconds": 5
+                }
+              }
+            ],
+            "initContainers": [
+              {
+                "name": "migrate",
+                "image": "nexo-bank-api:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "command": [
+                  "node",
+                  "dist/migrate.js"
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "identity_DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "KAFKA_BROKER",
+                    "value": "kafka:9092"
+                  },
+                  {
+                    "name": "SERVICE_NAME",
+                    "value": "identity"
+                  },
+                  {
+                    "name": "SERVICE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "SERVICE_TOKEN"
+                      }
+                    }
+                  },
+                  {
+                    "name": "MIGRATIONS_DIR",
+                    "value": "db/migrations"
+                  }
+                ],
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "runAsUser": 1000
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "api",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "api"
+        },
+        "ports": [
+          {
+            "port": 3000,
+            "targetPort": 3000
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "db-identity",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "db-identity"
+          }
+        },
+        "serviceName": "db-identity",
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "1Gi"
+                }
+              }
+            }
+          }
+        ],
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "db-identity"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "db-identity",
+                "image": "postgres:17-alpine",
+                "imagePullPolicy": "IfNotPresent",
+                "ports": [
+                  {
+                    "containerPort": 5432
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "POSTGRES_DB",
+                    "value": "identity"
+                  },
+                  {
+                    "name": "POSTGRES_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "identity_POSTGRES_PASSWORD"
+                      }
+                    }
+                  },
+                  {
+                    "name": "POSTGRES_USER",
+                    "value": "identity"
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "48Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "256Mi"
+                  }
+                },
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "sh",
+                      "-c",
+                      "pg_isready -U identity -d identity"
+                    ]
+                  },
+                  "periodSeconds": 5
+                },
+                "volumeMounts": [
+                  {
+                    "name": "data",
+                    "mountPath": "/var/lib/postgresql/data"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "db-identity",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "db-identity"
+        },
+        "ports": [
+          {
+            "port": 5432,
+            "targetPort": 5432
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "db-ledger",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "db-ledger"
+          }
+        },
+        "serviceName": "db-ledger",
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "1Gi"
+                }
+              }
+            }
+          }
+        ],
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "db-ledger"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "db-ledger",
+                "image": "postgres:17-alpine",
+                "imagePullPolicy": "IfNotPresent",
+                "ports": [
+                  {
+                    "containerPort": 5432
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "POSTGRES_DB",
+                    "value": "ledger"
+                  },
+                  {
+                    "name": "POSTGRES_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "ledger_POSTGRES_PASSWORD"
+                      }
+                    }
+                  },
+                  {
+                    "name": "POSTGRES_USER",
+                    "value": "ledger"
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "48Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "256Mi"
+                  }
+                },
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "sh",
+                      "-c",
+                      "pg_isready -U ledger -d ledger"
+                    ]
+                  },
+                  "periodSeconds": 5
+                },
+                "volumeMounts": [
+                  {
+                    "name": "data",
+                    "mountPath": "/var/lib/postgresql/data"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "db-ledger",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "db-ledger"
+        },
+        "ports": [
+          {
+            "port": 5432,
+            "targetPort": 5432
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "db-notifications",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "db-notifications"
+          }
+        },
+        "serviceName": "db-notifications",
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "1Gi"
+                }
+              }
+            }
+          }
+        ],
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "db-notifications"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "db-notifications",
+                "image": "postgres:17-alpine",
+                "imagePullPolicy": "IfNotPresent",
+                "ports": [
+                  {
+                    "containerPort": 5432
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "POSTGRES_DB",
+                    "value": "notifications"
+                  },
+                  {
+                    "name": "POSTGRES_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "notifications_POSTGRES_PASSWORD"
+                      }
+                    }
+                  },
+                  {
+                    "name": "POSTGRES_USER",
+                    "value": "notifications"
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "48Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "256Mi"
+                  }
+                },
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "sh",
+                      "-c",
+                      "pg_isready -U notifications -d notifications"
+                    ]
+                  },
+                  "periodSeconds": 5
+                },
+                "volumeMounts": [
+                  {
+                    "name": "data",
+                    "mountPath": "/var/lib/postgresql/data"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "db-notifications",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "db-notifications"
+        },
+        "ports": [
+          {
+            "port": 5432,
+            "targetPort": 5432
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "db-simulator",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "db-simulator"
+          }
+        },
+        "serviceName": "db-simulator",
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "1Gi"
+                }
+              }
+            }
+          }
+        ],
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "db-simulator"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "db-simulator",
+                "image": "postgres:17-alpine",
+                "imagePullPolicy": "IfNotPresent",
+                "ports": [
+                  {
+                    "containerPort": 5432
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "POSTGRES_DB",
+                    "value": "simulator"
+                  },
+                  {
+                    "name": "POSTGRES_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "simulator_POSTGRES_PASSWORD"
+                      }
+                    }
+                  },
+                  {
+                    "name": "POSTGRES_USER",
+                    "value": "simulator"
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "48Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "256Mi"
+                  }
+                },
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "sh",
+                      "-c",
+                      "pg_isready -U simulator -d simulator"
+                    ]
+                  },
+                  "periodSeconds": 5
+                },
+                "volumeMounts": [
+                  {
+                    "name": "data",
+                    "mountPath": "/var/lib/postgresql/data"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "db-simulator",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "db-simulator"
+        },
+        "ports": [
+          {
+            "port": 5432,
+            "targetPort": 5432
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "db-statements",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "db-statements"
+          }
+        },
+        "serviceName": "db-statements",
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "1Gi"
+                }
+              }
+            }
+          }
+        ],
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "db-statements"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "db-statements",
+                "image": "postgres:17-alpine",
+                "imagePullPolicy": "IfNotPresent",
+                "ports": [
+                  {
+                    "containerPort": 5432
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "POSTGRES_DB",
+                    "value": "statements"
+                  },
+                  {
+                    "name": "POSTGRES_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "statements_POSTGRES_PASSWORD"
+                      }
+                    }
+                  },
+                  {
+                    "name": "POSTGRES_USER",
+                    "value": "statements"
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "48Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "256Mi"
+                  }
+                },
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "sh",
+                      "-c",
+                      "pg_isready -U statements -d statements"
+                    ]
+                  },
+                  "periodSeconds": 5
+                },
+                "volumeMounts": [
+                  {
+                    "name": "data",
+                    "mountPath": "/var/lib/postgresql/data"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "db-statements",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "db-statements"
+        },
+        "ports": [
+          {
+            "port": 5432,
+            "targetPort": 5432
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "db-transfers",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "db-transfers"
+          }
+        },
+        "serviceName": "db-transfers",
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "1Gi"
+                }
+              }
+            }
+          }
+        ],
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "db-transfers"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "db-transfers",
+                "image": "postgres:17-alpine",
+                "imagePullPolicy": "IfNotPresent",
+                "ports": [
+                  {
+                    "containerPort": 5432
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "POSTGRES_DB",
+                    "value": "transfers"
+                  },
+                  {
+                    "name": "POSTGRES_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "transfers_POSTGRES_PASSWORD"
+                      }
+                    }
+                  },
+                  {
+                    "name": "POSTGRES_USER",
+                    "value": "transfers"
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "48Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "256Mi"
+                  }
+                },
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "sh",
+                      "-c",
+                      "pg_isready -U transfers -d transfers"
+                    ]
+                  },
+                  "periodSeconds": 5
+                },
+                "volumeMounts": [
+                  {
+                    "name": "data",
+                    "mountPath": "/var/lib/postgresql/data"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "db-transfers",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "db-transfers"
+        },
+        "ports": [
+          {
+            "port": 5432,
+            "targetPort": 5432
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "StatefulSet",
+      "metadata": {
+        "name": "kafka",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "kafka"
+          }
+        },
+        "serviceName": "kafka",
+        "volumeClaimTemplates": [
+          {
+            "metadata": {
+              "name": "data"
+            },
+            "spec": {
+              "accessModes": [
+                "ReadWriteOnce"
+              ],
+              "resources": {
+                "requests": {
+                  "storage": "1Gi"
+                }
+              }
+            }
+          }
+        ],
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "kafka"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "kafka",
+                "image": "apache/kafka:4.1.1",
+                "imagePullPolicy": "IfNotPresent",
+                "ports": [
+                  {
+                    "containerPort": 9092
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "CLUSTER_ID",
+                    "value": "MkU3OEVBNTcwNTJENDM2Qk"
+                  },
+                  {
+                    "name": "KAFKA_ADVERTISED_LISTENERS",
+                    "value": "PLAINTEXT://kafka:9092"
+                  },
+                  {
+                    "name": "KAFKA_CONTROLLER_LISTENER_NAMES",
+                    "value": "CONTROLLER"
+                  },
+                  {
+                    "name": "KAFKA_CONTROLLER_QUORUM_VOTERS",
+                    "value": "1@localhost:9093"
+                  },
+                  {
+                    "name": "KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS",
+                    "value": "0"
+                  },
+                  {
+                    "name": "KAFKA_LISTENERS",
+                    "value": "PLAINTEXT://:9092,CONTROLLER://:9093"
+                  },
+                  {
+                    "name": "KAFKA_LISTENER_SECURITY_PROTOCOL_MAP",
+                    "value": "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+                  },
+                  {
+                    "name": "KAFKA_LOG_DIRS",
+                    "value": "/tmp/kraft-combined-logs"
+                  },
+                  {
+                    "name": "KAFKA_NODE_ID",
+                    "value": "1"
+                  },
+                  {
+                    "name": "KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR",
+                    "value": "1"
+                  },
+                  {
+                    "name": "KAFKA_PROCESS_ROLES",
+                    "value": "broker,controller"
+                  },
+                  {
+                    "name": "KAFKA_TRANSACTION_STATE_LOG_MIN_ISR",
+                    "value": "1"
+                  },
+                  {
+                    "name": "KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR",
+                    "value": "1"
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "384Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "1Gi"
+                  }
+                },
+                "volumeMounts": [
+                  {
+                    "name": "data",
+                    "mountPath": "/tmp/kraft-combined-logs"
+                  }
+                ],
+                "readinessProbe": {
+                  "tcpSocket": {
+                    "port": 9092
+                  },
+                  "initialDelaySeconds": 15,
+                  "periodSeconds": 5
+                }
+              }
+            ],
+            "securityContext": {
+              "fsGroup": 1000
+            }
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "kafka",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "kafka"
+        },
+        "ports": [
+          {
+            "port": 9092,
+            "targetPort": 9092
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "ledger",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "ledger"
+          }
+        },
+        "strategy": {
+          "type": "RollingUpdate",
+          "rollingUpdate": {
+            "maxUnavailable": 0,
+            "maxSurge": 1
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "ledger"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "ledger",
+                "image": "nexo-bank-api:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "command": [
+                  "node",
+                  "dist/ledger.js"
+                ],
+                "ports": [
+                  {
+                    "containerPort": 3000
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "ledger_DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "KAFKA_BROKER",
+                    "value": "kafka:9092"
+                  },
+                  {
+                    "name": "SERVICE_NAME",
+                    "value": "ledger"
+                  },
+                  {
+                    "name": "SERVICE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "SERVICE_TOKEN"
+                      }
+                    }
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "80Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "512Mi"
+                  }
+                },
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "runAsUser": 1000
+                },
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/api/health",
+                    "port": 3000
+                  },
+                  "periodSeconds": 5
+                },
+                "livenessProbe": {
+                  "tcpSocket": {
+                    "port": 3000
+                  },
+                  "initialDelaySeconds": 30,
+                  "periodSeconds": 10
+                },
+                "startupProbe": {
+                  "httpGet": {
+                    "path": "/api/health",
+                    "port": 3000
+                  },
+                  "failureThreshold": 60,
+                  "periodSeconds": 5
+                }
+              }
+            ],
+            "initContainers": [
+              {
+                "name": "migrate",
+                "image": "nexo-bank-api:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "command": [
+                  "node",
+                  "dist/migrate.js"
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "ledger_DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "KAFKA_BROKER",
+                    "value": "kafka:9092"
+                  },
+                  {
+                    "name": "SERVICE_NAME",
+                    "value": "ledger"
+                  },
+                  {
+                    "name": "SERVICE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "SERVICE_TOKEN"
+                      }
+                    }
+                  },
+                  {
+                    "name": "MIGRATIONS_DIR",
+                    "value": "db/ledger"
+                  }
+                ],
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "runAsUser": 1000
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "ledger",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "ledger"
+        },
+        "ports": [
+          {
+            "port": 3000,
+            "targetPort": 3000
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "notifications",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "notifications"
+          }
+        },
+        "strategy": {
+          "type": "RollingUpdate",
+          "rollingUpdate": {
+            "maxUnavailable": 0,
+            "maxSurge": 1
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "notifications"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "notifications",
+                "image": "nexo-bank-api:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "command": [
+                  "node",
+                  "dist/projection.js"
+                ],
+                "ports": [
+                  {
+                    "containerPort": 3000
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "notifications_DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "KAFKA_BROKER",
+                    "value": "kafka:9092"
+                  },
+                  {
+                    "name": "SERVICE_NAME",
+                    "value": "notifications"
+                  },
+                  {
+                    "name": "SERVICE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "SERVICE_TOKEN"
+                      }
+                    }
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "80Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "512Mi"
+                  }
+                },
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "runAsUser": 1000
+                },
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/api/health",
+                    "port": 3000
+                  },
+                  "periodSeconds": 5
+                },
+                "livenessProbe": {
+                  "tcpSocket": {
+                    "port": 3000
+                  },
+                  "initialDelaySeconds": 30,
+                  "periodSeconds": 10
+                },
+                "startupProbe": {
+                  "httpGet": {
+                    "path": "/api/health",
+                    "port": 3000
+                  },
+                  "failureThreshold": 60,
+                  "periodSeconds": 5
+                }
+              }
+            ],
+            "initContainers": [
+              {
+                "name": "migrate",
+                "image": "nexo-bank-api:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "command": [
+                  "node",
+                  "dist/migrate.js"
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "notifications_DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "KAFKA_BROKER",
+                    "value": "kafka:9092"
+                  },
+                  {
+                    "name": "SERVICE_NAME",
+                    "value": "notifications"
+                  },
+                  {
+                    "name": "SERVICE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "SERVICE_TOKEN"
+                      }
+                    }
+                  },
+                  {
+                    "name": "MIGRATIONS_DIR",
+                    "value": "db/projection"
+                  }
+                ],
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "runAsUser": 1000
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "notifications",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "notifications"
+        },
+        "ports": [
+          {
+            "port": 3000,
+            "targetPort": 3000
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "simulator",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "simulator"
+          }
+        },
+        "strategy": {
+          "type": "RollingUpdate",
+          "rollingUpdate": {
+            "maxUnavailable": 0,
+            "maxSurge": 1
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "simulator"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "simulator",
+                "image": "nexo-bank-api:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "command": [
+                  "node",
+                  "dist/simulator.js"
+                ],
+                "ports": [
+                  {
+                    "containerPort": 3000
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "simulator_DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "KAFKA_BROKER",
+                    "value": "kafka:9092"
+                  },
+                  {
+                    "name": "SERVICE_NAME",
+                    "value": "simulator"
+                  },
+                  {
+                    "name": "SERVICE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "SERVICE_TOKEN"
+                      }
+                    }
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "80Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "512Mi"
+                  }
+                },
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "runAsUser": 1000
+                },
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/api/health",
+                    "port": 3000
+                  },
+                  "periodSeconds": 5
+                },
+                "livenessProbe": {
+                  "tcpSocket": {
+                    "port": 3000
+                  },
+                  "initialDelaySeconds": 30,
+                  "periodSeconds": 10
+                },
+                "startupProbe": {
+                  "httpGet": {
+                    "path": "/api/health",
+                    "port": 3000
+                  },
+                  "failureThreshold": 60,
+                  "periodSeconds": 5
+                }
+              }
+            ],
+            "initContainers": [
+              {
+                "name": "migrate",
+                "image": "nexo-bank-api:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "command": [
+                  "node",
+                  "dist/migrate.js"
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "simulator_DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "KAFKA_BROKER",
+                    "value": "kafka:9092"
+                  },
+                  {
+                    "name": "SERVICE_NAME",
+                    "value": "simulator"
+                  },
+                  {
+                    "name": "SERVICE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "SERVICE_TOKEN"
+                      }
+                    }
+                  },
+                  {
+                    "name": "MIGRATIONS_DIR",
+                    "value": "db/simulator"
+                  }
+                ],
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "runAsUser": 1000
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "simulator",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "simulator"
+        },
+        "ports": [
+          {
+            "port": 3000,
+            "targetPort": 3000
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "statements",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "statements"
+          }
+        },
+        "strategy": {
+          "type": "RollingUpdate",
+          "rollingUpdate": {
+            "maxUnavailable": 0,
+            "maxSurge": 1
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "statements"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "statements",
+                "image": "nexo-bank-api:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "command": [
+                  "node",
+                  "dist/projection.js"
+                ],
+                "ports": [
+                  {
+                    "containerPort": 3000
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "statements_DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "KAFKA_BROKER",
+                    "value": "kafka:9092"
+                  },
+                  {
+                    "name": "SERVICE_NAME",
+                    "value": "statements"
+                  },
+                  {
+                    "name": "SERVICE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "SERVICE_TOKEN"
+                      }
+                    }
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "80Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "512Mi"
+                  }
+                },
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "runAsUser": 1000
+                },
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/api/health",
+                    "port": 3000
+                  },
+                  "periodSeconds": 5
+                },
+                "livenessProbe": {
+                  "tcpSocket": {
+                    "port": 3000
+                  },
+                  "initialDelaySeconds": 30,
+                  "periodSeconds": 10
+                },
+                "startupProbe": {
+                  "httpGet": {
+                    "path": "/api/health",
+                    "port": 3000
+                  },
+                  "failureThreshold": 60,
+                  "periodSeconds": 5
+                }
+              }
+            ],
+            "initContainers": [
+              {
+                "name": "migrate",
+                "image": "nexo-bank-api:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "command": [
+                  "node",
+                  "dist/migrate.js"
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "statements_DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "KAFKA_BROKER",
+                    "value": "kafka:9092"
+                  },
+                  {
+                    "name": "SERVICE_NAME",
+                    "value": "statements"
+                  },
+                  {
+                    "name": "SERVICE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "SERVICE_TOKEN"
+                      }
+                    }
+                  },
+                  {
+                    "name": "MIGRATIONS_DIR",
+                    "value": "db/projection"
+                  }
+                ],
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "runAsUser": 1000
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "statements",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "statements"
+        },
+        "ports": [
+          {
+            "port": 3000,
+            "targetPort": 3000
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "transfers",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "transfers"
+          }
+        },
+        "strategy": {
+          "type": "RollingUpdate",
+          "rollingUpdate": {
+            "maxUnavailable": 0,
+            "maxSurge": 1
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "transfers"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "transfers",
+                "image": "nexo-bank-api:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "command": [
+                  "node",
+                  "dist/transfers.js"
+                ],
+                "ports": [
+                  {
+                    "containerPort": 3000
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "transfers_DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "KAFKA_BROKER",
+                    "value": "kafka:9092"
+                  },
+                  {
+                    "name": "SERVICE_NAME",
+                    "value": "transfers"
+                  },
+                  {
+                    "name": "SERVICE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "SERVICE_TOKEN"
+                      }
+                    }
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "80Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "512Mi"
+                  }
+                },
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "runAsUser": 1000
+                },
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/api/health",
+                    "port": 3000
+                  },
+                  "periodSeconds": 5
+                },
+                "livenessProbe": {
+                  "tcpSocket": {
+                    "port": 3000
+                  },
+                  "initialDelaySeconds": 30,
+                  "periodSeconds": 10
+                },
+                "startupProbe": {
+                  "httpGet": {
+                    "path": "/api/health",
+                    "port": 3000
+                  },
+                  "failureThreshold": 60,
+                  "periodSeconds": 5
+                }
+              }
+            ],
+            "initContainers": [
+              {
+                "name": "migrate",
+                "image": "nexo-bank-api:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "command": [
+                  "node",
+                  "dist/migrate.js"
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "transfers_DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "KAFKA_BROKER",
+                    "value": "kafka:9092"
+                  },
+                  {
+                    "name": "SERVICE_NAME",
+                    "value": "transfers"
+                  },
+                  {
+                    "name": "SERVICE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "demo-secrets",
+                        "key": "SERVICE_TOKEN"
+                      }
+                    }
+                  },
+                  {
+                    "name": "MIGRATIONS_DIR",
+                    "value": "db/transfers"
+                  }
+                ],
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "runAsUser": 1000
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "transfers",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "transfers"
+        },
+        "ports": [
+          {
+            "port": 3000,
+            "targetPort": 3000
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "web",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "web"
+          }
+        },
+        "strategy": {
+          "type": "RollingUpdate",
+          "rollingUpdate": {
+            "maxUnavailable": 0,
+            "maxSurge": 1
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "web"
+            }
+          },
+          "spec": {
+            "terminationGracePeriodSeconds": 30,
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "web",
+                "image": "nexo-bank-web:dev",
+                "imagePullPolicy": "IfNotPresent",
+                "ports": [
+                  {
+                    "containerPort": 8080
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "BACKEND_HOST",
+                    "value": "api.nexo-bank.svc.cluster.local"
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "25m",
+                    "memory": "80Mi"
+                  },
+                  "limits": {
+                    "cpu": "1000m",
+                    "memory": "512Mi"
+                  }
+                },
+                "securityContext": {
+                  "runAsNonRoot": true,
+                  "allowPrivilegeEscalation": false,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  },
+                  "runAsUser": 101
+                },
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/",
+                    "port": 8080
+                  },
+                  "periodSeconds": 5
+                },
+                "livenessProbe": {
+                  "tcpSocket": {
+                    "port": 8080
+                  },
+                  "initialDelaySeconds": 30,
+                  "periodSeconds": 10
+                },
+                "startupProbe": {
+                  "httpGet": {
+                    "path": "/",
+                    "port": 8080
+                  },
+                  "failureThreshold": 60,
+                  "periodSeconds": 5
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "web",
+        "namespace": "nexo-bank"
+      },
+      "spec": {
+        "selector": {
+          "app": "web"
+        },
+        "ports": [
+          {
+            "port": 8080,
+            "targetPort": 8080,
+            "nodePort": 30080
+          }
+        ],
+        "type": "NodePort"
+      }
+    }
+  ]
+}

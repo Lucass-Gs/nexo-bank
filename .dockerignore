@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.env*
+!.env.example
+.next
+apps/web/.next
+apps/web/dist
+test-results
+playwright-report
+
+*.log
+docs/screenshots
+.kubeconfig*

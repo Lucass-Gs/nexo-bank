@@ -1,0 +1,286 @@
+name: nexo-bank
+x-runtime: &runtime
+  build: { context: ., target: api }
+  init: true
+  restart: unless-stopped
+services:
+  kafka-init:
+    image: alpine:3.22
+    user: "0:0"
+    command: ["chown", "1000:1000", "/data"]
+    volumes: ["kafka-data:/data"]
+  kafka:
+    depends_on:
+      kafka-init: { condition: service_completed_successfully }
+    image: apache/kafka:4.1.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes: ["kafka-data:/tmp/kraft-combined-logs"]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+  db-identity:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: identity
+      POSTGRES_USER: identity
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-only}-identity
+    volumes: ["identity-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U identity -d identity"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  migrate-identity:
+    build: { context: ., target: api }
+    command: ["node", "dist/migrate.js"]
+    environment:
+      DATABASE_URL: postgres://identity:${POSTGRES_PASSWORD:-local-demo-only}-identity@db-identity:5432/identity
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      SERVICE_NAME: identity
+      KAFKA_BROKER: kafka:9092
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+      MIGRATIONS_DIR: db/migrations
+    depends_on:
+      db-identity: { condition: service_healthy }
+  api:
+    <<: *runtime
+    command: ["node", "dist/main.js"]
+    environment:
+      DATABASE_URL: postgres://identity:${POSTGRES_PASSWORD:-local-demo-only}-identity@db-identity:5432/identity
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      SERVICE_NAME: identity
+      KAFKA_BROKER: kafka:9092
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+    depends_on:
+      migrate-identity: { condition: service_completed_successfully }
+  db-ledger:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ledger
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-only}-ledger
+    volumes: ["ledger-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledger -d ledger"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  migrate-ledger:
+    build: { context: ., target: api }
+    command: ["node", "dist/migrate.js"]
+    environment:
+      DATABASE_URL: postgres://ledger:${POSTGRES_PASSWORD:-local-demo-only}-ledger@db-ledger:5432/ledger
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      SERVICE_NAME: ledger
+      KAFKA_BROKER: kafka:9092
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+      MIGRATIONS_DIR: db/ledger
+    depends_on:
+      db-ledger: { condition: service_healthy }
+  ledger:
+    <<: *runtime
+    command: ["node", "dist/ledger.js"]
+    environment:
+      DATABASE_URL: postgres://ledger:${POSTGRES_PASSWORD:-local-demo-only}-ledger@db-ledger:5432/ledger
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      SERVICE_NAME: ledger
+      KAFKA_BROKER: kafka:9092
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+    depends_on:
+      migrate-ledger: { condition: service_completed_successfully }
+      kafka: { condition: service_healthy }
+  db-transfers:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: transfers
+      POSTGRES_USER: transfers
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-only}-transfers
+    volumes: ["transfers-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transfers -d transfers"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  migrate-transfers:
+    build: { context: ., target: api }
+    command: ["node", "dist/migrate.js"]
+    environment:
+      DATABASE_URL: postgres://transfers:${POSTGRES_PASSWORD:-local-demo-only}-transfers@db-transfers:5432/transfers
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      SERVICE_NAME: transfers
+      KAFKA_BROKER: kafka:9092
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+      MIGRATIONS_DIR: db/transfers
+    depends_on:
+      db-transfers: { condition: service_healthy }
+  transfers:
+    <<: *runtime
+    command: ["node", "dist/transfers.js"]
+    environment:
+      DATABASE_URL: postgres://transfers:${POSTGRES_PASSWORD:-local-demo-only}-transfers@db-transfers:5432/transfers
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      SERVICE_NAME: transfers
+      KAFKA_BROKER: kafka:9092
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+    depends_on:
+      migrate-transfers: { condition: service_completed_successfully }
+  db-statements:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: statements
+      POSTGRES_USER: statements
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-only}-statements
+    volumes: ["statements-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U statements -d statements"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  migrate-statements:
+    build: { context: ., target: api }
+    command: ["node", "dist/migrate.js"]
+    environment:
+      DATABASE_URL: postgres://statements:${POSTGRES_PASSWORD:-local-demo-only}-statements@db-statements:5432/statements
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      SERVICE_NAME: statements
+      KAFKA_BROKER: kafka:9092
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+      MIGRATIONS_DIR: db/projection
+    depends_on:
+      db-statements: { condition: service_healthy }
+  statements:
+    <<: *runtime
+    command: ["node", "dist/projection.js"]
+    environment:
+      DATABASE_URL: postgres://statements:${POSTGRES_PASSWORD:-local-demo-only}-statements@db-statements:5432/statements
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      SERVICE_NAME: statements
+      KAFKA_BROKER: kafka:9092
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+    depends_on:
+      migrate-statements: { condition: service_completed_successfully }
+      kafka: { condition: service_healthy }
+  db-notifications:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: notifications
+      POSTGRES_USER: notifications
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-only}-notifications
+    volumes: ["notifications-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notifications -d notifications"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  migrate-notifications:
+    build: { context: ., target: api }
+    command: ["node", "dist/migrate.js"]
+    environment:
+      DATABASE_URL: postgres://notifications:${POSTGRES_PASSWORD:-local-demo-only}-notifications@db-notifications:5432/notifications
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      SERVICE_NAME: notifications
+      KAFKA_BROKER: kafka:9092
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+      MIGRATIONS_DIR: db/projection
+    depends_on:
+      db-notifications: { condition: service_healthy }
+  notifications:
+    <<: *runtime
+    command: ["node", "dist/projection.js"]
+    environment:
+      DATABASE_URL: postgres://notifications:${POSTGRES_PASSWORD:-local-demo-only}-notifications@db-notifications:5432/notifications
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      SERVICE_NAME: notifications
+      KAFKA_BROKER: kafka:9092
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+    depends_on:
+      migrate-notifications: { condition: service_completed_successfully }
+      kafka: { condition: service_healthy }
+  db-simulator:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: simulator
+      POSTGRES_USER: simulator
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-only}-simulator
+    volumes: ["simulator-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U simulator -d simulator"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  migrate-simulator:
+    build: { context: ., target: api }
+    command: ["node", "dist/migrate.js"]
+    environment:
+      DATABASE_URL: postgres://simulator:${POSTGRES_PASSWORD:-local-demo-only}-simulator@db-simulator:5432/simulator
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      SERVICE_NAME: simulator
+      KAFKA_BROKER: kafka:9092
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+      MIGRATIONS_DIR: db/simulator
+    depends_on:
+      db-simulator: { condition: service_healthy }
+  simulator:
+    <<: *runtime
+    command: ["node", "dist/simulator.js"]
+    environment:
+      DATABASE_URL: postgres://simulator:${POSTGRES_PASSWORD:-local-demo-only}-simulator@db-simulator:5432/simulator
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      SERVICE_NAME: simulator
+      KAFKA_BROKER: kafka:9092
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+    depends_on:
+      migrate-simulator: { condition: service_completed_successfully }
+  web:
+    build: { context: ., dockerfile: Dockerfile.web }
+    ports: ["127.0.0.1:${PORT:-4104}:8080"]
+    depends_on:
+      api: { condition: service_healthy }
+      ledger: { condition: service_healthy }
+      transfers: { condition: service_healthy }
+      statements: { condition: service_healthy }
+  seed:
+    build: { context: ., target: api }
+    command: ["sh", "-c", "node dist/seed.js && node dist/bank-seed.js"]
+    environment:
+      DATABASE_URL: postgres://identity:${POSTGRES_PASSWORD:-local-demo-only}-identity@db-identity:5432/identity
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-internal-demo-token-change-before-deploy}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo1234!}
+    profiles: ["tools"]
+    depends_on:
+      api: { condition: service_healthy }
+      ledger: { condition: service_healthy }
+  tests:
+    build: { context: ., target: test }
+    environment:
+      BASE_URL: http://web:8080
+    profiles: ["test"]
+    depends_on:
+      web: { condition: service_healthy }
+volumes:
+  kafka-data:
+  identity-data:
+  ledger-data:
+  transfers-data:
+  statements-data:
+  notifications-data:
+  simulator-data:

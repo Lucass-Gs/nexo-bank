@@ -1,0 +1,68 @@
+{
+  "apiVersion": "batch/v1",
+  "kind": "Job",
+  "metadata": {
+    "name": "demo-seed",
+    "namespace": "nexo-bank"
+  },
+  "spec": {
+    "backoffLimit": 6,
+    "template": {
+      "metadata": {
+        "labels": {
+          "app": "demo-seed"
+        }
+      },
+      "spec": {
+        "restartPolicy": "OnFailure",
+        "automountServiceAccountToken": false,
+        "containers": [
+          {
+            "name": "seed",
+            "image": "nexo-bank-api:dev",
+            "imagePullPolicy": "IfNotPresent",
+            "command": [
+              "sh",
+              "-c",
+              "node dist/seed.js && node dist/bank-seed.js"
+            ],
+            "env": [
+              {
+                "name": "DATABASE_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "demo-secrets",
+                    "key": "identity_DATABASE_URL"
+                  }
+                }
+              },
+              {
+                "name": "SERVICE_TOKEN",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "demo-secrets",
+                    "key": "SERVICE_TOKEN"
+                  }
+                }
+              },
+              {
+                "name": "DEMO_PASSWORD",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "demo-secrets",
+                    "key": "DEMO_PASSWORD"
+                  }
+                }
+              }
+            ],
+            "securityContext": {
+              "runAsNonRoot": true,
+              "allowPrivilegeEscalation": false,
+              "runAsUser": 1000
+            }
+          }
+        ]
+      }
+    }
+  }
+}

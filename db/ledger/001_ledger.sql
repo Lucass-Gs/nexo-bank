@@ -1,0 +1,12 @@
+CREATE TABLE accounts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owner_id uuid UNIQUE,name text NOT NULL,balance bigint NOT NULL DEFAULT 0,reserved bigint NOT NULL DEFAULT 0 CHECK(reserved>=0),technical boolean NOT NULL DEFAULT false,CHECK(technical OR balance>=reserved));
+INSERT INTO accounts(id,name,technical) VALUES('90000000-0000-4000-8000-000000000001','Funding fictício',true),('90000000-0000-4000-8000-000000000002','Clearing simulado',true);
+CREATE TABLE journals(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),command_id text UNIQUE NOT NULL,payload_hash text NOT NULL,description text NOT NULL,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE entries(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,journal_id uuid NOT NULL REFERENCES journals(id),account_id uuid NOT NULL REFERENCES accounts(id),amount bigint NOT NULL CHECK(amount<>0));
+CREATE INDEX entries_account ON entries(account_id,id);
+CREATE FUNCTION assert_balanced() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF (SELECT COALESCE(sum(amount),0) FROM entries WHERE journal_id=NEW.journal_id)<>0 OR (SELECT count(*) FROM entries WHERE journal_id=NEW.journal_id)<2 THEN RAISE EXCEPTION 'Unbalanced journal'; END IF; RETURN NULL; END $$;
+CREATE CONSTRAINT TRIGGER balanced AFTER INSERT ON entries DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION assert_balanced();
+CREATE FUNCTION immutable_entry() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Ledger is append-only'; END $$;
+CREATE TRIGGER immutable_entries BEFORE UPDATE OR DELETE ON entries FOR EACH ROW EXECUTE FUNCTION immutable_entry();
+CREATE TRIGGER immutable_journals BEFORE UPDATE OR DELETE ON journals FOR EACH ROW EXECUTE FUNCTION immutable_entry();
+CREATE TABLE holds(id uuid PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id),amount bigint NOT NULL CHECK(amount>0),status text NOT NULL DEFAULT 'reserved' CHECK(status IN ('reserved','captured','released')));
+CREATE TABLE outbox(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),payload jsonb NOT NULL,published_at timestamptz,created_at timestamptz NOT NULL DEFAULT now());
