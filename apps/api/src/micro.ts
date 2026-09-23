@@ -66,7 +66,7 @@ export async function boot(controller: any, after?: (db: Db) => Promise<void>) {
       while (running) {
         try {
           await after(db);
-          if (running) console.error("Background processor stopped; reconnecting.");
+          return;
         } catch (error) {
           console.error("Background processor unavailable; retrying.", error);
         }
